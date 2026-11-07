@@ -7,17 +7,27 @@ import android.content.*;
 import android.content.pm.PackageManager;
 import android.graphics.*;
 import android.os.*;
-import android.provider.Settings;
+import android.hardware.*;
+import android.content.res.Configuration;
 import android.view.*;
 import android.widget.*;
 import java.util.*;
 
 @SuppressWarnings("MissingPermission")
-public class MainActivity extends Activity {
+public class MainActivity extends Activity implements SensorEventListener {
     private HidConnection connection;
     private TextView status;
     private LinearLayout root, body;
     private Vibrator vibrator;
+    private SensorManager sensors;
+    private Sensor rotationSensor;
+    private final Steering steering=new Steering();
+    private boolean gyroEnabled, sensorActive, gamepadMode;
+    private int gyroX;
+    private long lastGyroSend;
+    private Switch gyroSwitch;
+    private TextView gyroStatus;
+    private final float[] quaternion=new float[4];
     private boolean haptics=true, shift=false, ctrl=false;
     private int strength=130, buttons, lx,ly,rx,ry,lt,rt;
     
@@ -26,6 +36,11 @@ public class MainActivity extends Activity {
         super.onCreate(state);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         vibrator=(Vibrator)getSystemService(VIBRATOR_SERVICE);
+        sensors=(SensorManager)getSystemService(SENSOR_SERVICE);
+        if(sensors!=null && sensors.getDefaultSensor(Sensor.TYPE_GYROSCOPE)!=null) {
+            rotationSensor=sensors.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR);
+            if(rotationSensor==null) rotationSensor=sensors.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR);
+        }
         root=new LinearLayout(this); root.setOrientation(1); root.setPadding(20,20,20,12); root.setBackgroundColor(BG);
         setContentView(root);
         root.setOnApplyWindowInsetsListener((v,insets)->{
@@ -99,10 +114,30 @@ public class MainActivity extends Activity {
         if(connection!=null)connection.release();
     }
     private void show(String mode) {
-        reset();body.removeAllViews();
+        stopGyro(); gyroEnabled=false; gyroSwitch=null; gyroStatus=null;
+        gamepadMode=mode.equals("Gamepad"); reset();body.removeAllViews();
         if(mode.equals("Gamepad")) {
             text(body,"GENERIC HID GAMEPAD • Xbox mode requires a future PC companion",12);
             text(body,"Landscape recommended • map controls in your game",12);
+            gyroSwitch=new Switch(this); gyroSwitch.setText("Gyro steering OFF"); gyroSwitch.setTextColor(Color.WHITE);
+            gyroSwitch.setEnabled(rotationSensor!=null); body.addView(gyroSwitch);
+            gyroStatus=text(body,rotationSensor==null?"Gyro unavailable on this phone":"OFF — left joystick controls steering",12);
+            gyroSwitch.setOnCheckedChangeListener((v,enabled)->{
+                gyroEnabled=enabled; lx=0;
+                if(enabled) startGyro(); else stopGyro();
+                gyroSwitch.setText(gyroEnabled?"Gyro steering ON":"Gyro steering OFF");
+                if(!gyroEnabled) gyroStatus.setText("OFF — left joystick controls steering");
+                pad();
+            });
+            LinearLayout gyroOptions=row(body);
+            button(gyroOptions,"Calibrate",()->{ if(gyroEnabled){steering.reset();gyroX=0;pad();gyroStatus.setText("Hold phone centered…");} });
+            TextView lockLabel=text(body,"Steering sensitivity: full lock at 35°",12);
+            SeekBar lock=new SeekBar(this);lock.setMax(60);lock.setProgress(20);lock.setContentDescription("Full steering lock angle");body.addView(lock);
+            lock.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
+                public void onProgressChanged(SeekBar bar,int value,boolean user){steering.setFullLock(value+15);lockLabel.setText("Steering sensitivity: full lock at "+(value+15)+"°");}
+                public void onStartTrackingTouch(SeekBar bar){} public void onStopTrackingTouch(SeekBar bar){}
+            });
+            steering.setFullLock(35);
             LinearLayout shoulders=row(body);
             hold(shoulders,"L1",4); trigger(shoulders,"L2",true);trigger(shoulders,"R2",false);hold(shoulders,"R1",5);
             LinearLayout sticks=row(body);
@@ -147,7 +182,7 @@ public class MainActivity extends Activity {
     private int usage(char c){return c>='a'&&c<='z'?4+c-'a':c=='0'?39:30+c-'1';}
     private void key(int usage){send(1,Reports.keyboard((shift?2:0)|(ctrl?1:0),usage));send(1,new byte[8]);buzz(12);}
     private void clickMouse(int b){send(2,Reports.mouse(b,0,0,0));send(2,new byte[4]);buzz(15);}
-    private void pad(){send(3,Reports.gamepad(buttons,lx,ly,rx,ry,lt,rt));}
+    private void pad(){send(3,Reports.gamepad(buttons,gyroEnabled?gyroX:lx,ly,rx,ry,lt,rt));}
     private void hold(LinearLayout parent,String label,int bit){
         Button b=button(parent,label,()->{});b.setOnTouchListener((v,e)->{
             if(e.getActionMasked()==MotionEvent.ACTION_DOWN){buttons|=1<<bit;pad();buzz(22);v.setPressed(true);return true;}
@@ -176,10 +211,38 @@ public class MainActivity extends Activity {
                 float radius=Math.max(1,Math.min(getWidth(),getHeight())*.39f);px=(e.getX(index)-getWidth()/2f)/radius;py=(e.getY(index)-getHeight()/2f)/radius;
                 float length=(float)Math.hypot(px,py);if(length>1){px/=length;py/=length;}if(length<.12f){px=py=0;}
             }
-            if(right){rx=(int)(px*127);ry=(int)(py*127);}else{lx=(int)(px*127);ly=(int)(py*127);}pad();invalidate();return true;
+            if(right){rx=(int)(px*127);ry=(int)(py*127);}else{lx=gyroEnabled?0:(int)(px*127);ly=(int)(py*127);}pad();invalidate();return true;
         }
     }
-    @Override protected void onResume(){super.onResume();if(connection!=null && permissions() && connection.adapter()!=null && connection.adapter().isEnabled())connection.start();}
-    @Override protected void onPause(){reset();if(vibrator!=null)vibrator.cancel();super.onPause();}
+    private void startGyro() {
+        steering.reset();gyroX=0;lastGyroSend=0;
+        sensorActive=sensors!=null && rotationSensor!=null && sensors.registerListener(this,rotationSensor,20_000);
+        if(!sensorActive) {
+            gyroEnabled=false;
+            if(gyroSwitch!=null) gyroSwitch.setChecked(false);
+            say("Gyro could not start on this phone");
+        } else if(gyroStatus!=null) gyroStatus.setText("Hold phone centered — calibrating…");
+    }
+    private void stopGyro() {
+        if(sensors!=null) sensors.unregisterListener(this);
+        sensorActive=false;gyroX=0;steering.reset();
+    }
+    @Override public void onSensorChanged(SensorEvent event) {
+        if(!sensorActive || !gyroEnabled || !gamepadMode) return;
+        // Limit sensor processing/report output even if another app requests faster sampling.
+        if(lastGyroSend!=0 && event.timestamp-lastGyroSend<20_000_000L) return;
+        lastGyroSend=event.timestamp;
+        SensorManager.getQuaternionFromVector(quaternion,event.values);
+        gyroX=steering.update(quaternion[1],quaternion[2],quaternion[3],quaternion[0]);
+        if(gyroStatus!=null) gyroStatus.setText("Tilt like a steering wheel • steering "+gyroX+" / 127");
+        pad();
+    }
+    @Override public void onAccuracyChanged(Sensor sensor,int accuracy) {}
+    @Override public void onConfigurationChanged(Configuration configuration) {
+        super.onConfigurationChanged(configuration);
+        if(gyroEnabled){steering.reset();gyroX=0;pad();}
+    }
+    @Override protected void onResume(){super.onResume();if(gyroEnabled && gamepadMode)startGyro();if(connection!=null && permissions() && connection.adapter()!=null && connection.adapter().isEnabled())connection.start();}
+    @Override protected void onPause(){stopGyro();reset();if(vibrator!=null)vibrator.cancel();super.onPause();}
     @Override protected void onDestroy(){if(connection!=null && permissions())connection.close();super.onDestroy();}
 }

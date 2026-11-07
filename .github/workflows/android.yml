@@ -21,8 +21,9 @@ jobs:
       - name: Verify HID report encoding
         run: |
           mkdir -p /tmp/deck-tests
-          javac -d /tmp/deck-tests app/src/main/java/com/bluetoothdeck/app/Reports.java tests/ReportsTest.java
+          javac -d /tmp/deck-tests app/src/main/java/com/bluetoothdeck/app/Reports.java app/src/main/java/com/bluetoothdeck/app/Steering.java tests/ReportsTest.java tests/SteeringTest.java
           java -cp /tmp/deck-tests ReportsTest
+          java -cp /tmp/deck-tests SteeringTest
       - run: gradle :app:assembleDebug --no-daemon
       - uses: actions/upload-artifact@v4
         with:

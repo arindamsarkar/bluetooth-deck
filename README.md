@@ -1,4 +1,4 @@
-# Bluetooth Deck — Android prototype v0.1
+# Bluetooth Deck — Android prototype v0.2
 
 An Android 9+ source project for a Bluetooth keyboard, touchpad/mouse, and generic HID gamepad. No PC receiver is required for the direct HID mode. A phone with Bluetooth HID Device profile support is required; Android version alone does not guarantee OEM support.
 
@@ -67,3 +67,14 @@ Technical references:
 - https://developer.android.com/develop/ui/views/haptics/haptics-apis
 - https://learn.microsoft.com/en-us/windows/win32/xinput/xinput-and-directinput
 - https://www.playstation.com/en-in/accessories/dualsense-wireless-controller/
+
+
+## Gyro steering (v0.2)
+
+In Gamepad mode, enable **Gyro steering** and hold the phone at your comfortable center position for the first sensor sample. Rotate the phone like a steering wheel: clockwise steers right. Gyro controls left-stick X; buttons, triggers, and other axes continue to work. Turning gyro off centers steering and returns X control to the touchscreen joystick. Calibrate at any time to choose a new center.
+
+The sensitivity slider sets full steering lock from 15° (more sensitive) to 75° (less sensitive), default 35°. A 2° dead zone and smoothing reduce jitter. Sampling/reporting is capped at approximately 50 Hz. Gyro is off by default and disabled on phones without a gyroscope-backed rotation sensor. Sensors stop when the app is paused or another mode is selected; returning from a pause recalibrates if gyro was on. Changing controller modes turns gyro off.
+
+Map **left-stick X / X axis** to steering in your racing game's controls. This feature sends normal gamepad steering, not raw PlayStation motion data; game compatibility still depends on generic HID support. No physical sensor/Bluetooth racing test has been performed by the author. Check steering direction in joy.cpl, calibration, both landscape orientations, gyro off, pause/resume, and simultaneous throttle/brake before racing.
+
+The CI workflow runs `SteeringTest` for calibration, steering direction/limits, sensitivity, dead zone, neutral return, angle wrap, quaternion sign invariance, landscape/pitched baselines, and invalid readings, alongside report tests and the APK build.
