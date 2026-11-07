@@ -12,9 +12,17 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+          log-accepted-android-sdk-licenses: false
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
+      - name: Verify HID report encoding
+        run: |
+          mkdir -p /tmp/deck-tests
+          javac -d /tmp/deck-tests app/src/main/java/com/bluetoothdeck/app/Reports.java tests/ReportsTest.java
+          java -cp /tmp/deck-tests ReportsTest
       - run: gradle :app:assembleDebug --no-daemon
       - uses: actions/upload-artifact@v4
         with:
